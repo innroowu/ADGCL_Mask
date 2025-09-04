@@ -69,7 +69,6 @@ class WSReadout(nn.Module):
         out = torch.mul(seq,sim)
         out = torch.sum(out,1)
         return out
-    
 
 class Discriminator(nn.Module):
     def __init__(self, n_h, negsamp_round):
@@ -105,15 +104,15 @@ class Discriminator(nn.Module):
 
 class ReconstructionTask(nn.Module):
     """
-    reconstruction: mask + reconstruct
+    重構任務：mask + reconstruct
     """
     def __init__(self, feature_dim, hidden_dim, mask_ratio=0.3):
         super(ReconstructionTask, self).__init__()
         
-        # 可可學習的mask token
+        # 可學習的mask token
         self.mask_token = nn.Parameter(torch.randn(feature_dim))
         
-        # reconstruction_decoder
+        # 重構解碼器
         self.reconstruction_decoder = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
@@ -159,7 +158,7 @@ class ReconstructionTask(nn.Module):
         for b in range(batch_size):
             # 隨機選擇要mask的位置（不包括最後一個target節點）
             num_to_mask = max(1, int((seq_len - 1) * self.mask_ratio))
-            mask_positions = torch.randperm(seq_len - 1)[:num_to_mask]  # 不掩码target节点
+            mask_positions = torch.randperm(seq_len - 1)[:num_to_mask]  # 不掩蓋target節點
             
             # 應用mask
             masked_features[b, mask_positions, :] = self.mask_token.expand_as(
@@ -172,13 +171,15 @@ class ReconstructionTask(nn.Module):
     
     def compute_reconstruction_loss(self, node_embeddings, original_features, mask_indices_list):
         """
+        計算重構損失
+
         Args:
-        node_embeddings: [batch_size, seq_len, hidden_​​dim] GCN輸出的節點embedding
+        node_embeddings: [batch_size, seq_len, hidden_dim] GCN輸出的節點embedding
         original_features: [batch_size, seq_len, feature_dim] 原始特徵
         mask_indices_list: 每個樣本被遮罩的位置列表
 
         Returns:
-        reconstruction_loss
+        reconstruction_loss: 重構損失
         """
         batch_size = node_embeddings.shape[0]
         total_loss = 0.0
@@ -194,7 +195,7 @@ class ReconstructionTask(nn.Module):
             masked_embeddings = node_embeddings[b, mask_positions, :]  # [num_masked, hidden_dim]
             original_masked_features = original_features[b, mask_positions, :]  # [num_masked, feature_dim]
             
-            # 透過解碼器重構特徵
+            # 通過解碼器重構特徵
             reconstructed_features = self.reconstruction_decoder(masked_embeddings)
             
             # MSE loss
@@ -204,15 +205,13 @@ class ReconstructionTask(nn.Module):
         
         # 平均重構損失
         if num_masked > 0:
-            final_loss = total_loss / batch_size
-            #return total_loss / batch_size
-            return final_loss * 10.0
+            return total_loss / batch_size
         else:
             return torch.tensor(0.0, device=node_embeddings.device)
 
 
 class Model(nn.Module):
-    def __init__(self, n_in, n_h, activation, negsamp_round, readout, discriminator_type, temperature=0.1, learnable_temp=False, enable_reconstruction=True):
+    def __init__(self, n_in, n_h, activation, negsamp_round, readout, enable_reconstruction=False):
         super(Model, self).__init__()
         self.read_mode = readout
         self.gcn = GCN(n_in, n_h, activation)
@@ -225,17 +224,13 @@ class Model(nn.Module):
             self.read = AvgReadout()
         elif readout == 'weighted_sum':
             self.read = WSReadout()
-            
-            
+
         self.disc = Discriminator(n_h, negsamp_round)
 
-        # 新增：重構任务
+        # 新增：重構任務
         self.enable_reconstruction = enable_reconstruction
         if enable_reconstruction:
             self.reconstruction_task = ReconstructionTask(n_in, n_h)
-            print(f"✅ 重構任務已啟用")
-        else:
-            print(f"✅ 重構任務未啟用")
 
     def forward(self, seq1, adj, sparse=False, return_reconstruction_loss=False):
         reconstruction_loss = 0.0
@@ -247,8 +242,7 @@ class Model(nn.Module):
         else:
             input_features = seq1
 
-        #h_1 = self.gcn(seq1, adj, sparse)
-        h_1 = self.gcn(input_features, adj, sparse)  # 注意：这里应该用input_features
+        h_1 = self.gcn(input_features, adj, sparse)
 
         if self.read_mode != 'weighted_sum':
             c = self.read(h_1[:,: -1,:])
@@ -259,7 +253,7 @@ class Model(nn.Module):
 
         ret = self.disc(c, h_mv)
         
-        #計算重構損失
+        # 計算重構損失
         if self.enable_reconstruction and return_reconstruction_loss:
             reconstruction_loss = self.reconstruction_task.compute_reconstruction_loss(
                 h_1, original_features, mask_indices
@@ -269,7 +263,6 @@ class Model(nn.Module):
             return ret, h_mv, c, reconstruction_loss
         else:
             return ret, h_mv, c
-        #return ret, h_mv, c
 
 
 class Gene(nn.Module):
